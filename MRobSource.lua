@@ -6,7 +6,7 @@ while not game.Players do
   wait(.1)
 end
 
-local gamer = {game.CollectionService, table.insert, table.remove} 
+local gamer = {game.CollectionService, game:GetService("PathfindingService"), table.insert, table.remove} 
 local sDebug = false
 
 
@@ -82,7 +82,7 @@ local me = plrs.LocalPlayer;
     local mobRange = _G.mobRange
     local bossRange = _G.bossRange
     local extremelyFast = _G.extremelyFast
-    local walkspeed = 33
+    local walkspeed = 34
     local insert = gamer[3]
     local remove = gamer[4]
 
