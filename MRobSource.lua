@@ -6,7 +6,7 @@ while not game.Players do
   wait(.1)
 end
 
-local gamer = {game.CollectionService, local PathfindingService = game:GetService("PathfindingService"), table.insert, table.remove} 
+local gamer = {game.CollectionService, game:GetService("PathfindingService"), table.insert, table.remove} 
 local sDebug = false
 
 
