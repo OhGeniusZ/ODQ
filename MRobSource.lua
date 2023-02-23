@@ -1385,7 +1385,7 @@ local me = plrs.LocalPlayer;
     local function initHitBox()
       if workspace:FindFirstChild("tier") or workspace:FindFirstChild("currentWave") then -- boss raid or wave defense ( they work the same )
         workspace.enemies.ChildAdded:Connect(function(instance)
-            if instance.Name == "Stone Warrior" then -- instakill in mob folder
+            if instance.Name == "Aggressive Lava Walker" then -- instakill in mob folder
               instance:WaitForChild("Humanoid")
               addHitBox(instance, 5)
               wait(1)
