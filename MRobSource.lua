@@ -82,7 +82,7 @@ local me = plrs.LocalPlayer;
     local mobRange = _G.mobRange
     local bossRange = _G.bossRange
     local extremelyFast = _G.extremelyFast
-    local walkspeed = 30 
+    local walkspeed = 33 
     local insert = gamer[3]
     local remove = gamer[4]
 
@@ -98,7 +98,7 @@ local me = plrs.LocalPlayer;
     -- variable for hitbox
     local bossPresent = false
     -- follow path variables
-    _G.auto_attack  = true
+    _G.auto_attack  = false
     _G.smallTeleportVal = 15
 
     -- expiermental instakilltable
