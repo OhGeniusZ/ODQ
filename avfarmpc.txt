@@ -1,0 +1,816 @@
+while not game:IsLoaded() do
+  wait(.1)
+end
+
+while not game.Players do
+  wait(.1)
+end
+
+while not game.Players.LocalPlayer do
+  wait(.1)
+end
+
+repeat wait() until game:IsLoaded()
+wait(3)
+print("welcome")
+
+local gameOver = false
+local date = os.date("%d %B %Y %X")
+
+local function fetchStartingInventory()
+    -- Wait for remotes.reloadInvy to exist in ReplicatedStorage
+    local reloadInvy = game.ReplicatedStorage:WaitForChild("remotes"):WaitForChild("reloadInvy", 10) -- 10 seconds timeout
+    if not reloadInvy then
+        warn("reloadInvy not found in time!")
+        return nil
+    end
+
+    local success, inventory
+    for _ = 1, 5 do -- Retry up to 5 times
+        success, inventory = pcall(function()
+            return reloadInvy:InvokeServer()
+        end)
+        if success and inventory then
+            return {
+                weapons = inventory.weapons,
+                abilities = inventory.abilities,
+                chests = inventory.chests,
+                helmets = inventory.helmets,
+                rings = inventory.rings
+            }
+        else
+            warn("Failed to fetch inventory, retrying...")
+            task.wait(2) -- Wait 2 seconds before retrying
+        end
+    end
+
+    warn("Failed to fetch inventory after multiple attempts!")
+    return nil
+end
+
+local function fetchLatestInventory()
+    local inventory = game.ReplicatedStorage.remotes.reloadInvy:InvokeServer()
+    return {
+        weapons = inventory.weapons,
+        abilities = inventory.abilities,
+        chests = inventory.chests,
+        helmets = inventory.helmets,
+        rings = inventory.rings
+    }
+end
+
+local function formatNumber(value)
+    if value >= 1e15 then
+        return string.format("%.1fQ", value / 1e15)
+    elseif value >= 1e12 then
+        return string.format("%.1fT", value / 1e12)
+    elseif value >= 1e9 then
+        return string.format("%.1fB", value / 1e9)
+    elseif value >= 1e6 then
+        return string.format("%.1fM", value / 1e6)
+    elseif value >= 1e3 then
+        return string.format("%.1fK", value / 1e3)
+    else
+        return tostring(value)
+    end
+end
+
+local webhookLocals = {
+    itemsEarned = {},
+    startingInventory = fetchStartingInventory(),
+    dungeonName = nil,
+    timeLeft = nil,
+    endingInventory = nil,
+    colorTable = {
+        ['ultimate'] = "15548997",
+        ['legendary'] = "16426522",
+        ['epic'] = "14031610",
+        ['rare'] = "39423",
+        ['uncommon'] = "2096896",
+        ['common'] = "15859184",
+    }
+}
+
+function Format(Int)
+    return string.format("%02i", Int)
+end
+
+local function convertToHMS(Seconds)
+    local Minutes = (Seconds - Seconds % 60) / 60
+    Seconds = Seconds - Minutes * 60
+    return Format(Minutes) .. ":" .. Format(Seconds)
+end
+
+local function sendDiscordMessage(content)
+    (syn and syn.request or http_request) {
+        Url = _G.webhookLink;
+        Method = 'POST';
+        Headers = {
+            ['Content-Type'] = 'application/json';
+        };
+        Body = game:GetService('HttpService'):JSONEncode({
+            content = content
+        });
+    };
+end
+
+local function sendWebhookItem()
+    (syn and syn.request or http_request) {
+        Url = _G.webhookLink;
+        Method = 'POST';
+        Headers = {
+            ['Content-Type'] = 'application/json';
+        };
+        Body = game:GetService('HttpService'):JSONEncode({
+            embeds = {
+                {
+                    title = "GeGenius Webhook",
+                    thumbnail = {
+                        url = "https://cdn.discordapp.com/attachments/504587319429300227/1300084290113241149/lebron.jpg?ex=671f8d59&is=671e3bd9&hm=fd4e1f6a8e8481b2608d22e618de321e16bb6873554cc7c749f688278dbc1f8e&",
+                    },
+                    fields = {
+                        {
+                            name = "User",
+                            value = game.Players.LocalPlayer.Name,
+                            inline = false
+                        },
+                        {
+                            name = "Level",
+                            value = tostring(game.Players.LocalPlayer.leaderstats.Level.Value),
+                            inline = false
+                        },
+                        {
+                            name = "Balance",
+                            value = formatNumber(game.Players.LocalPlayer.leaderstats.Gold.Value),
+                            inline = true
+                        },
+                        {
+                            name = "Experience",
+                            value = string.format("%s/%s", 
+                                formatNumber(game.Players.LocalPlayer.XP.Value),
+                                formatNumber(game.Players.LocalPlayer.XPNeeded.Value)
+                            ),
+                            inline = true
+                        },
+                        {
+                            name = "**Item Earned**",
+                            value = table.concat(webhookLocals.itemsEarned, "\n"),
+                            inline = false
+                        },
+                    },
+                    color = 1752220,
+                    footer = {
+                        text = "Date: " .. date
+                    }
+                }
+            }
+        });
+    };
+end
+
+local function capFirstLetter(word)
+    local firstLetter = word:sub(1, 1)
+    local theRest = word:sub(2)
+    return firstLetter:upper() .. theRest
+end
+
+local function getNewItems(firstTable, secondTable)
+    for i, item in pairs(secondTable) do
+        if not firstTable[i] then
+            local emojiColor = ""
+            if item.rarity == "ultimate" then
+                emojiColor = ":red_circle:"
+            elseif item.rarity == "legendary" then
+                emojiColor = ":yellow_circle:"
+            elseif item.rarity == "epic" then
+                emojiColor = ":purple_circle:"
+            elseif item.rarity == "rare" then
+                emojiColor = ":blue_circle:"
+            elseif item.rarity == "uncommon" then
+                emojiColor = ":green_circle:"
+            elseif item.rarity == "common" then
+                emojiColor = ":white_circle:"
+            end
+            
+            local s = string.format("%s %s", emojiColor, capFirstLetter(item.name))
+            table.insert(webhookLocals.itemsEarned, s)
+
+            -- Check if the item matches pinglist
+            for name, rarities in pairs(_G.pinglist) do
+                if item.name == name and table.find(rarities, item.rarity) then
+                    if _G.everyone then
+                        sendDiscordMessage("@everyone")
+                    else
+                        sendDiscordMessage("<@" .. _G.discord .. ">")
+                    end
+                end
+            end
+        end
+    end
+end
+
+local function webHookOnEnd()
+    if _G.webhookEnabled then
+        webhookLocals.timeLeft = convertToHMS(workspace.timeLeft.Value)
+        webhookLocals.itemsEarned = {}
+
+        print('doing webhook')
+        webhookLocals.endingInventory = fetchLatestInventory()
+        getNewItems(webhookLocals.startingInventory.weapons, webhookLocals.endingInventory.weapons)
+        getNewItems(webhookLocals.startingInventory.abilities, webhookLocals.endingInventory.abilities)
+        getNewItems(webhookLocals.startingInventory.chests, webhookLocals.endingInventory.chests)
+        getNewItems(webhookLocals.startingInventory.helmets, webhookLocals.endingInventory.helmets)
+        getNewItems(webhookLocals.startingInventory.rings, webhookLocals.endingInventory.rings)
+        sendWebhookItem()
+        print('done webhook')
+    end
+end
+
+local function getPlayerInvy(player)
+  return game.ReplicatedStorage.remotes.reloadInvy:InvokeServer()
+end
+
+function getItemType(v, includeHealth)
+  if not v.health then
+      return v.spellPower < v.physicalDamage and "physical" or "mage"
+  else
+      if includeHealth then
+          if v.spellPower > math.max(v.physicalPower, v.health) then
+              return "mage"
+          elseif v.physicalPower > v.health then
+              return "physical"
+          else
+              return "guardian"
+          end
+      else
+          return v.spellPower > v.physicalPower and "mage" or "physical"
+      end
+  end
+end
+
+function lobbyStrCheck(a, b)
+  local la = string.gsub(string.lower(a), "[%s']", "")
+  local lb = string.gsub(string.lower(b), "[%s']", "")
+  return la == lb
+end
+
+function checkSell(rare, name)
+  for itemName, rareTable in pairs(_G.itemlist) do
+      if lobbyStrCheck(itemName, name) then
+          for _, j in ipairs(rareTable) do
+              if rare == j then return false end
+          end
+      end
+  end
+  return not _G.keeprarities[rare]
+end
+
+local function sellRings(ringIds)
+  game.ReplicatedStorage.remotes.sellItemEvent:FireServer({
+      chest = {}, ability = {}, helmet = {}, ring = ringIds, weapon = {}
+  })
+end
+
+local function sellAllRings(player)
+  local invyStats = getPlayerInvy(player)
+  local ringIdsToSell = {}
+
+  if invyStats.rings then
+      for ringName, ringInfo in pairs(invyStats.rings) do
+          if not ringInfo.equipped.right1 and not ringInfo.equipped.left1 then
+              local ringId = tonumber(ringName:match("ring_(%d+)"))
+              if ringId and checkSell(ringInfo.rarity, ringInfo.name) then
+                  table.insert(ringIdsToSell, ringId)
+              end
+          end
+      end
+  end
+
+  if #ringIdsToSell > 0 then
+      sellRings(ringIdsToSell)
+      print("Selling rings: " .. table.concat(ringIdsToSell, ", "))
+  else
+      print("No rings to sell.")
+  end
+end
+
+local function Sell()
+  _G.TS = false
+  _G.keep_items_from_class = { physical = false, mage = false }
+
+  if _G.autosellindungeon then
+      local tallyList = {}
+      local gitems = getPlayerInvy(game.Players.LocalPlayer)
+
+      for itemFolderName, itemFolder in pairs(gitems) do
+          if itemFolderName == "weapons" or itemFolderName == "chests" or itemFolderName == "helmets" then
+              for i, item in pairs(itemFolder) do
+                  local itemType = getItemType(item, false)
+                  
+                  -- Debugging: Check level and rarity of each item
+                  print("Checking item:", item.name, "LevelReq:", item.levelReq, "Rarity:", item.rarity)
+
+                  -- Ensure `levelReq` exists and all conditions are met
+                  if not item.equipped and 
+                     item.levelReq and 
+                     item.levelReq < _G.keep_items_level_requirement and 
+                     not _G.keep_items_from_class[itemType] and 
+                     checkSell(item.rarity, item.name) then
+                     
+                      -- Extract item ID properly
+                      local itemId = tonumber(i:match("%d+"))
+                      if itemId then
+                          local args = { ability = {}, helmet = {}, chest = {}, weapon = {} }
+                          args[itemFolderName:sub(1, -2)] = { itemId }
+                          game.ReplicatedStorage.remotes.sellItemEvent:FireServer(args)
+                          print("Selling item:", item.name, "(ID:", itemId, ")")
+                      else
+                          warn("Invalid item ID for:", i)
+                      end
+                  end
+              end
+          elseif itemFolderName == "abilities" then
+              for i, item in pairs(gitems.abilities) do
+                  local abilityId = tonumber(i:match("%d+")) -- Extract the ID
+                  if abilityId then
+                      tallyList[item.name] = (tallyList[item.name] or 0) + 1
+                      local shouldSell = item.levelReq and 
+                                         item.levelReq < _G.keep_items_level_requirement and 
+                                         checkSell(item.rarity, item.name)
+                      
+                      if shouldSell or (tallyList[item.name] > 2 and _G.keep2spells) then
+                          -- Sell ability
+                          local args = {
+                              chest = {}, ability = { abilityId },
+                              helmet = {}, ring = {}, weapon = {}
+                          }
+                          game.ReplicatedStorage.remotes.sellItemEvent:FireServer(args)
+                          print("Selling ability:", item.name, "(ID:", abilityId, ")")
+                      end
+                  else
+                      warn("Invalid ability ID for:", i)
+                  end
+              end
+          end
+      end
+      sellAllRings(game.Players.LocalPlayer)
+  end
+end
+
+
+local function Create()
+    print("Starting grinding acc")
+    print(_G.Difficult)
+    print(_G.Dungeon)
+    game:GetService("ReplicatedStorage"):WaitForChild("remotes"):WaitForChild("createLobby"):InvokeServer(_G.Dungeon, _G.Difficult, 0, _G.Hardcore, false, false)
+    wait()
+    game:GetService("ReplicatedStorage"):WaitForChild("remotes"):WaitForChild("startDungeon"):FireServer()
+    game:GetService("ReplicatedStorage"):WaitForChild("remotes"):WaitForChild("startDungeon"):FireServer()
+end
+
+local function rejoin()
+  while true do
+    repeat wait() until game.CoreGui:FindFirstChild('RobloxPromptGui')
+    
+    local lp,po,ts = game:GetService('Players').LocalPlayer,game.CoreGui.RobloxPromptGui.promptOverlay,game:GetService('TeleportService')
+    
+    po.ChildAdded:connect(function(a)
+        if a.Name == 'ErrorPrompt' then
+            repeat
+                ts:Teleport(2414851778)
+                wait(2)
+            until false
+        end
+    end)
+    end
+  end
+
+
+  function WaitGregg()
+    local function CE()
+      local startTime = os.time()
+      local endTime = startTime + 2
+    
+      while os.time() < endTime do
+          for i = 1, 7 do
+              local success, enemy = pcall(function()
+                  return game:GetService("Workspace").dungeon["room"..i].enemyFolder:FindFirstChild("Gregg")
+              end)
+              if success and enemy then
+                  return enemy
+              end
+          end
+          wait(0)
+      end
+      return nil
+    end
+    while true do
+      local enemy = CE()
+      if not enemy then
+          break
+      end
+      wait(0)
+    end
+    end
+
+local function fps1()
+      local decalsyeeted = true -- Leaving this on makes games look shitty but the fps goes up by at least 20.
+      local g = game
+      local w = g.Workspace
+      local l = g.Lighting
+      local t = w.Terrain
+      for _,v in pairs(workspace:GetDescendants()) do
+        if v.ClassName == "Part"
+        or v.ClassName == "SpawnLocation"
+        or v.ClassName == "WedgePart"
+        or v.ClassName == "Terrain"
+        or v.ClassName == "MeshPart" then
+        v.Material = "Plastic"
+        end
+        end
+      sethiddenproperty(l,"Technology",2)
+      sethiddenproperty(t,"Decoration",false)
+      game.ReplicatedStorage.projectiles:Destroy()
+      t.WaterWaveSize = 0
+      t.WaterWaveSpeed = 0
+      t.WaterReflectance = 0
+      t.WaterTransparency = 0
+      l.GlobalShadows = false
+      l.FogEnd = 9e9
+      l.Brightness = 0
+      task.wait(5)
+      game.Players.LocalPlayer.Character["playerNameplate"]:Destroy()
+      settings().Rendering.QualityLevel = "Level01"
+      for i, v in pairs(g:GetDescendants()) do
+        if v:IsA("Part") or v:IsA("Union") or v:IsA("CornerWedgePart") or v:IsA("TrussPart") then
+          v.Material = "Plastic"
+          v.Reflectance = 0
+        elseif v:IsA("Decal") or v:IsA("Texture") and decalsyeeted then
+          v.Transparency = 1
+        elseif v:IsA("ParticleEmitter") or v:IsA("Trail") then
+          v.Lifetime = NumberRange.new(0)
+        elseif v:IsA("Explosion") then
+          v.BlastPressure = 1
+          v.BlastRadius = 1
+        elseif v:IsA("Fire") or v:IsA("SpotLight") or v:IsA("Smoke") or v:IsA("Sparkles") then
+          v.Enabled = false
+        elseif v:IsA("MeshPart") then
+          v.Material = "Plastic"
+          v.Reflectance = 0
+          v.TextureID = 10385902758728957
+        end
+      end
+      for i, e in pairs(l:GetChildren()) do
+        if e:IsA("BlurEffect") or e:IsA("SunRaysEffect") or e:IsA("ColorCorrectionEffect") or e:IsA("BloomEffect") or e:IsA("DepthOfFieldEffect") then
+          e.Enabled = false
+        end
+      end
+    end
+
+local function fps2()
+      repeat task.wait() until game:IsLoaded()
+    if not game:IsLoaded() then game:IsLoaded():Wait(5) end
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+UserSettings():GetService("UserGameSettings").MasterVolume = 0
+local decalsyeeted = true
+local g = game
+local w = g.Workspace
+local l = g.Lighting
+local t = w.Terrain
+sethiddenproperty(l,"Technology",2)
+sethiddenproperty(t,"Decoration",false)
+t.WaterWaveSize = 0
+t.WaterWaveSpeed = 0
+t.WaterReflectance = 0
+t.WaterTransparency = 0
+l.GlobalShadows = 0
+l.FogEnd = 9e9
+l.Brightness = 0
+settings().Rendering.QualityLevel = "Level01"
+for i, v in pairs(w:GetDescendants()) do
+    if v:IsA("BasePart") and not v:IsA("MeshPart") then
+        v.Material = "Plastic"
+        v.Reflectance = 0
+    elseif (v:IsA("Decal") or v:IsA("Texture")) and decalsyeeted then
+        v.Transparency = 1
+    elseif v:IsA("ParticleEmitter") or v:IsA("Trail") then
+        v.Lifetime = NumberRange.new(0)
+    elseif v:IsA("Explosion") then
+        v.BlastPressure = 1
+        v.BlastRadius = 1
+    elseif v:IsA("Fire") or v:IsA("SpotLight") or v:IsA("Smoke") or v:IsA("Sparkles") then
+        v.Enabled = false
+    elseif v:IsA("MeshPart") and decalsyeeted then
+        v.Material = "Plastic"
+        v.Reflectance = 0
+        v.TextureID = 10385902758728957
+    elseif v:IsA("SpecialMesh") and decalsyeeted  then
+        v.TextureId=0
+    elseif v:IsA("ShirtGraphic") and decalsyeeted then
+        v.Graphic=1
+    elseif (v:IsA("Shirt") or v:IsA("Pants")) and decalsyeeted then
+        v[v.ClassName.."Template"]=1
+    end
+end
+for i = 1,#l:GetChildren() do
+    e=l:GetChildren()[i]
+    if e:IsA("BlurEffect") or e:IsA("SunRaysEffect") or e:IsA("ColorCorrectionEffect") or e:IsA("BloomEffect") or e:IsA("DepthOfFieldEffect") then
+        e.Enabled = false
+    end
+end
+w.DescendantAdded:Connect(function(v)
+   if v:IsA("BasePart") and not v:IsA("MeshPart") then
+        v.Material = "Plastic"
+        v.Reflectance = 0
+    elseif v:IsA("Decal") or v:IsA("Texture") and decalsyeeted then
+        v.Transparency = 1
+    elseif v:IsA("ParticleEmitter") or v:IsA("Trail") then
+        v.Lifetime = NumberRange.new(0)
+    elseif v:IsA("Explosion") then
+        v.BlastPressure = 1
+        v.BlastRadius = 1
+    elseif v:IsA("Fire") or v:IsA("SpotLight") or v:IsA("Smoke") or v:IsA("Sparkles") then
+        v.Enabled = false
+    elseif v:IsA("MeshPart") and decalsyeeted then
+        v.Material = "Plastic"
+        v.Reflectance = 0
+        v.TextureID = 10385902758728957
+    elseif v:IsA("SpecialMesh") and decalsyeeted then
+        v.TextureId=0
+    elseif v:IsA("ShirtGraphic") and decalsyeeted then
+        v.ShirtGraphic=1
+    elseif (v:IsA("Shirt") or v:IsA("Pants")) and decalsyeeted then
+        v[v.ClassName.."Template"]=1
+            end
+        end)
+      end
+
+  local function ResetGregg()
+    while true do
+        pcall(function()
+            for i = 1, 10 do
+                local room = game:GetService("Workspace").dungeon["room"..i]
+                local enemy = room.enemyFolder:FindFirstChild("Gregg")
+                
+                if enemy then
+                    wait(.1)
+                    game.Players.LocalPlayer.Character:BreakJoints()
+                    break
+                end
+            end
+        end)
+        wait(1)  -- Check every 1 second
+    end
+end
+local function fast(targetPosition)
+  local player = game.Players.LocalPlayer
+  local character = player.Character
+  local primaryPart = character.PrimaryPart
+  local tweenService = game:GetService("TweenService")
+  local tweenInfo = TweenInfo.new(.7, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut)
+  local goal = {CFrame = CFrame.new(targetPosition)}
+  local tween = tweenService:Create(primaryPart, tweenInfo, goal)
+  
+  tween:Play()
+  tween.Completed:Wait()
+end
+
+local function fast2(targetPosition)
+  local player = game.Players.LocalPlayer
+  local character = player.Character
+  local primaryPart = character.PrimaryPart
+  local tweenService = game:GetService("TweenService")
+  local tweenInfo = TweenInfo.new(.5, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut)
+  local goal = {CFrame = CFrame.new(targetPosition)}
+  local tween = tweenService:Create(primaryPart, tweenInfo, goal)
+  
+  tween:Play()
+  tween.Completed:Wait()
+end
+
+local function tweenToPosition(targetPosition)
+    local player = game.Players.LocalPlayer
+    local character = player.Character
+    if not character or not character.PrimaryPart then return end
+
+    local primaryPart = character.PrimaryPart
+    local tweenService = game:GetService("TweenService")
+
+    -- WalkSpeed
+    local walkSpeed = 32
+
+    -- Calculate distance and duration
+    local distance = (primaryPart.Position - targetPosition).Magnitude
+    local duration = distance / walkSpeed -- Time = Distance / Speed
+
+    -- Create and play the tween
+    local tweenInfo = TweenInfo.new(duration, Enum.EasingStyle.Linear, Enum.EasingDirection.InOut)
+    local goal = {CFrame = CFrame.new(targetPosition)}
+    local tween = tweenService:Create(primaryPart, tweenInfo, goal)
+    
+    tween:Play()
+    tween.Completed:Wait()
+end
+
+local VirtualInputManager = game:GetService("VirtualInputManager")
+
+local function e()
+    game:GetService("RunService").Heartbeat:Connect(function()
+        for i = 1, 50 do -- Adjusted to a reasonable value for stability
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+        end
+    end)
+end
+
+
+local function body()
+game.Players.LocalPlayer.Character:WaitForChild("ChestGear"):Destroy()
+game.Players.LocalPlayer.Character:WaitForChild("HelmetGear"):Destroy()
+game.Players.LocalPlayer.Character:WaitForChild("WeaponGear"):Destroy()
+game.Players.LocalPlayer.Character:WaitForChild("LeftFoot"):Destroy()
+game.Players.LocalPlayer.Character:WaitForChild("LeftHand"):Destroy()
+game.Players.LocalPlayer.Character:WaitForChild("LeftLowerArm"):Destroy()
+game.Players.LocalPlayer.Character:WaitForChild("LeftLowerLeg"):Destroy()
+game.Players.LocalPlayer.Character:WaitForChild("LeftUpperArm"):Destroy()
+game.Players.LocalPlayer.Character:WaitForChild("LeftUpperLeg"):Destroy()
+game.Players.LocalPlayer.Character:WaitForChild("LowerTorso"):Destroy()
+game.Players.LocalPlayer.Character:WaitForChild("RightFoot"):Destroy()
+game.Players.LocalPlayer.Character:WaitForChild("RightHand"):Destroy()
+game.Players.LocalPlayer.Character:WaitForChild("RightLowerArm"):Destroy()
+game.Players.LocalPlayer.Character:WaitForChild("RightLowerLeg"):Destroy()
+game.Players.LocalPlayer.Character:WaitForChild("RightUpperArm"):Destroy()
+game.Players.LocalPlayer.Character:WaitForChild("RightUpperLeg"):Destroy()
+end
+
+local function d()
+    local replicatedStorage = game:GetService("ReplicatedStorage")
+    game:GetService("RunService").Heartbeat:Connect(function()
+        -- Check and destroy specific instances in the workspace
+        for _, instance in ipairs(workspace:GetChildren()) do
+            if instance.Name == "groundAura" or instance.Name == "Mighty Leap Slam Cricle" then
+                instance:Destroy()
+            end
+        end
+
+        -- Check and destroy the "projectiles" object in ReplicatedStorage
+        local projectiles = replicatedStorage:FindFirstChild("projectiles")
+        if projectiles then
+            projectiles:Destroy()
+        end
+    end)
+end
+
+local RT = false
+local BB = false
+
+local function Close()
+    while wait(.1) do
+	game:GetService("ReplicatedStorage").dataRemoteEvent:FireServer({{["\3"] = "closeRevive"}, "\13"})
+end
+end
+
+local function Retry()
+    while RT do
+        wait(1)
+        game:GetService("ReplicatedStorage").dataRemoteEvent:FireServer({{vote = true, ["\3"] = "vote"}, "/"})
+    end
+    print("no Retry") -- Debug
+end
+
+local function Bonus()
+    while BB do
+        wait(1)
+        game:GetService("ReplicatedStorage").dataRemoteEvent:FireServer({{vote = "bonus", ["\3"] = "vote"}, "/"})
+    end
+    print("no Bonus") -- Debug
+end
+
+local function looptp()
+	while true do
+		tweenToPosition(Vector3.new(2370, -623, 113)) -- bonus
+		wait(1)
+	end
+end
+
+function Gregg1()
+    print("start Gregg")
+  for i = 1, 7 do -- Iterate from room 1 to room 9
+      spawn(function() -- Spawn a new thread to handle each room
+          local enemy -- Declare enemy variable
+          repeat
+              local success, err = pcall(function() -- Use pcall to catch errors
+                  enemy = game:GetService("Workspace").dungeon["room"..i].enemyFolder:FindFirstChild("Gregg") -- Get reference to the enemy in each room
+              end)
+              if not success then -- If an error occurs
+                  warn("Error while searching for enemy:", err) -- Print the error message
+              end
+              wait() -- Wait for a short moment
+          until enemy -- Keep looping until enemy exists
+  
+          while enemy do -- Loop as long as the enemy exists
+              fast(workspace.dungeon["room"..i].enemyFolder["Gregg"].HumanoidRootPart.Position)
+              local success, err = pcall(function() -- Use pcall to catch errors
+                  enemy = game:GetService("Workspace").dungeon["room"..i].enemyFolder:FindFirstChild("Gregg") -- Update reference to the enemy
+              end)
+              if not success then -- If an error occurs
+                  warn("Error while searching for enemy:", err) -- Print the error message
+              end
+          end
+      end)
+  end
+  end
+
+local function Adelys()
+while wait() do if workspace.timeLeft.Value == 780 then game:GetService('TeleportService'):Teleport(2414851778) break end end
+end
+
+local function AV()
+spawn(Retry)
+spawn(Bonus)
+RT = true
+BB = false
+tweenToPosition(Vector3.new(-12, 5, 39))
+tweenToPosition(Vector3.new(-15, 5, 102))
+tweenToPosition(Vector3.new(-12, 5, -11))
+tweenToPosition(Vector3.new(-12, 5, -148)) --room1done
+WaitGregg()
+fast(Vector3.new(63, -65, -5))
+tweenToPosition(Vector3.new(255, -65, 28)) --room2done
+fast(Vector3.new(288, -86, 30))
+tweenToPosition(Vector3.new(381, -86, 32))
+tweenToPosition(Vector3.new(437, -86, 36))
+tweenToPosition(Vector3.new(401, -86, -13))
+tweenToPosition(Vector3.new(398, -86, -39))
+tweenToPosition(Vector3.new(388, -86, 96)) --room3done
+fast(Vector3.new(618, -139, -18))
+tweenToPosition(Vector3.new(676, -139, -14))
+tweenToPosition(Vector3.new(676, -139, 11))
+tweenToPosition(Vector3.new(643, -139, 11)) --room4?
+fast(Vector3.new(802, -207, 22))
+tweenToPosition(Vector3.new(901, -209, 30))
+tweenToPosition(Vector3.new(891, -209, 68))
+fast(Vector3.new(1060, -310, 99))
+tweenToPosition(Vector3.new(1162, -306, 109))
+tweenToPosition(Vector3.new(1160, -306, 135))
+tweenToPosition(Vector3.new(1226, -311, 99)) -- falling
+fast2(Vector3.new(1230, -481, 81))
+tweenToPosition(Vector3.new(1137, -481, 76))
+tweenToPosition(Vector3.new(1325, -481, 86)) --room6
+WaitGregg()
+fast(Vector3.new(1581, -487, 96))
+tweenToPosition(Vector3.new(1634, -487, 96))
+tweenToPosition(Vector3.new(1614, -487, 57))
+tweenToPosition(Vector3.new(1583, -487, 55))
+tweenToPosition(Vector3.new(1560, -487, 83))
+tweenToPosition(Vector3.new(1551, -487, 117))
+tweenToPosition(Vector3.new(1565, -487, 133))
+tweenToPosition(Vector3.new(1586, -487, 144)) --room7
+tweenToPosition(Vector3.new(1589, -487, 100)) --boss
+spawn(Adelys)
+wait(6)
+RT = false
+BB = true
+spawn(Retry)
+spawn(Bonus)
+while not (workspace:FindFirstChild("dungeon") and workspace.dungeon:FindFirstChild("bonusBoss") and workspace.dungeon.bonusBoss:FindFirstChild("enemyFolder") and workspace.dungeon.bonusBoss.enemyFolder:FindFirstChild("The Voidborn")) do task.wait(.1) end
+wait(3)
+tweenToPosition(Vector3.new(2370, -623, 113)) -- bonus
+spawn(looptp)
+while workspace:FindFirstChild("dungeon") and workspace.dungeon:FindFirstChild("bonusBoss") and workspace.dungeon.bonusBoss:FindFirstChild("enemyFolder") and workspace.dungeon.bonusBoss.enemyFolder:FindFirstChild("The Voidborn") and workspace.dungeon.bonusBoss.enemyFolder["The Voidborn"].ClassName == "Model" do task.wait() end
+spawn(fetchLatestInventory)
+wait(1)
+webHookOnEnd()
+wait(1)
+Sell()
+wait(1)
+RT = true
+BB = false
+spawn(Retry)
+spawn(Bonus)
+end
+
+if game.PlaceId == 14363263080 then
+	spawn(body)
+	spawn(Gregg1)
+	spawn(e)
+	spawn(d)
+	spawn(fps1)
+	spawn(fps2)
+	game:GetService("ReplicatedStorage").remotes.changeStartValue:FireServer()
+	tweenToPosition(Vector3.new(-44, 5, -5))
+	repeat wait() until workspace.dungeonProgress.Value == "inProgress"
+	spawn(fetchStartingInventory)
+	spawn(AV)
+	game:GetService("Players").LocalPlayer.PlayerGui.HUD.Main.PlayerStatus.PlayerStatus.PlayerName.Text = "🔥🔥🔥 Sigmaboy 🗿🗿🗿"; game:GetService("Players").LocalPlayer.PlayerGui.HUD.Main.PlayerStatus.PlayerStatus.Health.BarFrame.TextLabel.Text = "🔥🔥🔥 Sigmaboy 🗿🗿🗿"; game:GetService("Players").LocalPlayer.PlayerGui.HUD.Main.PlayerStatus.PlayerStatus.XP.BarFrame.TextLabel.Text = "🔥🔥🔥 Sigmaboy 🗿🗿🗿"; game:GetService("Players").LocalPlayer.PlayerGui.HUD.Main.PlayerStatus.PlayerStatus.Level.TextLabel.Text = "🔥🔥🔥 Sigmaboy 🗿🗿🗿"; game:GetService("RunService").Heartbeat:Connect(function() game:GetService("Players").LocalPlayer.PlayerGui.HUD.Main.PlayerStatus.PlayerStatus.PlayerName.Text = "🔥🔥🔥 Sigmaboy 🗿🗿🗿"; game:GetService("Players").LocalPlayer.PlayerGui.HUD.Main.PlayerStatus.PlayerStatus.Health.BarFrame.TextLabel.Text = "🔥🔥🔥 Sigmaboy 🗿🗿🗿"; game:GetService("Players").LocalPlayer.PlayerGui.HUD.Main.PlayerStatus.PlayerStatus.XP.BarFrame.TextLabel.Text = "🔥🔥🔥 Sigmaboy 🗿🗿🗿"; game:GetService("Players").LocalPlayer.PlayerGui.HUD.Main.PlayerStatus.PlayerStatus.Level.TextLabel.Text = "🔥🔥🔥 Sigmaboy 🗿🗿🗿" end)
+	spawn(rejoin)
+	wait(180)
+	game:GetService('TeleportService'):Teleport(2414851778)
+else
+	spawn(Create)
+	wait(10)
+	spawn(Create)
+	spawn(rejoin)
+	wait(180)
+	game:GetService('TeleportService'):Teleport(2414851778)
+end
